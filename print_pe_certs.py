@@ -88,7 +88,10 @@ def main():
     print('This PE/COFF binary has no signature. Exiting.')
     return
 
+  # TODO - can there be multiple signed_pecoffs?
   signed_pecoff = signed_pecoffs[0]
+  if len(signed_pecoffs) > 1:
+    print("Found {:d} signed pecoffs".format(len(signed_pecoffs)))
 
   signed_datas = signed_pecoff['SignedData']
   # There may be multiple of these, if the windows binary was signed multiple
@@ -96,6 +99,8 @@ def main():
   # blob to the binary.
   # TODO(user): Process all instances
   signed_data = signed_datas[0]
+  if len(signed_datas) > 1:
+    print("Found {:d} signed datas".format(len(signed_datas)))
 
   blob = pecoff_blob.PecoffBlob(signed_data)
 
@@ -113,6 +118,8 @@ def main():
       print('OpenSSL Errors:\n%s' % auth.openssl_error)
     raise
 
+  # TODO - validate if this is okay for now.
+  # base validity on some combo of auth fields.
   print('Program: %s, URL: %s' % (auth.program_name, auth.program_url))
   if auth.has_countersignature:
     print('Countersignature is present. Timestamp: %s UTC' %
