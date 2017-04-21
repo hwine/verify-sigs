@@ -52,6 +52,9 @@ del F, univ
 
 def main():
     data_file = sys.argv[1]
+    check_exe(data_file)
+
+def check_exe(data_file):
 
     with file(data_file, 'rb') as objf:
         fingerprinter = fingerprint.Fingerprinter(objf)
