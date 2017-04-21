@@ -1,0 +1,8 @@
+# Derived via pip freeze
+appdirs
+M2Crypto
+packaging
+pyasn1
+pyparsing
+six
+typing
