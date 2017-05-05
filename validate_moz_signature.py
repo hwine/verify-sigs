@@ -37,31 +37,26 @@ import fingerprint
 import pecoff_blob
 from asn1 import dn
 
+# Certificate serial numbers we consider valid
+VALID_CERTS = [
+    13159122772063869363917814975931229904L,
+]
+
 
 # EVIL EVIL -- Monkeypatch to extend accessor
 # TODO(user): This was submitted to pyasn1. Remove when we have it back.
 def F(self, idx):
     if type(idx) is int:
         return self.getComponentByPosition(idx)
-    else: return self.getComponentByName(idx)
+    else:
+        return self.getComponentByName(idx)
 from pyasn1.type import univ  # pylint: disable-msg=C6204,C6203
 univ.SequenceAndSetBase.__getitem__ = F
 del F, univ
 # EVIL EVIL
 
 
-def main():
-    data_file = sys.argv[1]
-    check_exe(data_file)
-
-def check_exe(data_file):
-
-    with file(data_file, 'rb') as objf:
-        fingerprinter = fingerprint.Fingerprinter(objf)
-        is_pecoff = fingerprinter.EvalPecoff()
-        fingerprinter.EvalGeneric()
-        results = fingerprinter.HashIt()
-
+def print_hashes(results):
     print('Generic hashes:')
     hashes = [x for x in results if x['name'] == 'generic']
     if len(hashes) > 1:
@@ -71,65 +66,25 @@ def check_exe(data_file):
             print('%s: %s' % (hname, hashes[0][hname].encode('hex')))
     print
 
-    if not is_pecoff:
-        print('This is not a PE/COFF binary. Exiting.')
-        return
 
-    print('PE/COFF hashes:')
-    hashes = [x for x in results if x['name'] == 'pecoff']
-    if len(hashes) > 1:
-        print('More than one PE/COFF finger? Only printing first one.')
-    for hname in sorted(hashes[0].keys()):
-        if hname != 'name' and hname != 'SignedData':
-            print('%s: %s' % (hname, hashes[0][hname].encode('hex')))
-    print
+def print_pecoff_hashes(results):
+        print('PE/COFF hashes:')
+        hashes = [x for x in results if x['name'] == 'pecoff']
+        if len(hashes) > 1:
+            print('More than one PE/COFF finger? Only printing first one.')
+        for hname in sorted(hashes[0].keys()):
+            if hname != 'name' and hname != 'SignedData':
+                print('%s: %s' % (hname, hashes[0][hname].encode('hex')))
+        print
 
-    signed_pecoffs = [x for x in results if x['name'] == 'pecoff' and
-                      'SignedData' in x]
 
-    if not signed_pecoffs:
-        print('This PE/COFF binary has no signature. Exiting.')
-        return
-
-    # TODO - can there be multiple signed_pecoffs?
-    signed_pecoff = signed_pecoffs[0]
-    if len(signed_pecoffs) > 1:
-        print("Found {:d} signed pecoffs".format(len(signed_pecoffs)))
-
-    signed_datas = signed_pecoff['SignedData']
-    # There may be multiple of these, if the windows binary was signed multiple
-    # times, e.g. by different entities. Each of them adds a complete SignedData
-    # blob to the binary.
-    # TODO(user): Process all instances
-    signed_data = signed_datas[0]
-    if len(signed_datas) > 1:
-        print("Found {:d} signed datas".format(len(signed_datas)))
-
-    blob = pecoff_blob.PecoffBlob(signed_data)
-
-    auth = auth_data.AuthData(blob.getCertificateBlob())
-    content_hasher_name = auth.digest_algorithm().name
-    computed_content_hash = signed_pecoff[content_hasher_name]
-
-    try:
-        auth.ValidateAsn1()
-        auth.ValidateHashes(computed_content_hash)
-        auth.ValidateSignatures()
-        auth.ValidateCertChains(time.gmtime())
-    except auth_data.Asn1Error:
-        if auth.openssl_error:
-            print('OpenSSL Errors:\n%s' % auth.openssl_error)
-        raise
-
-    # TODO - validate if this is okay for now.
-    # base validity on some combo of auth fields.
+def print_certificates(auth):
     print('Program: %s, URL: %s' % (auth.program_name, auth.program_url))
     if auth.has_countersignature:
         print('Countersignature is present. Timestamp: %s UTC' %
               time.asctime(time.gmtime(auth.counter_timestamp)))
     else:
         print('Countersignature is not present.')
-
     print('Binary is signed with cert issued by:')
     pprint.pprint(auth.signing_cert_id)
     print
@@ -150,7 +105,6 @@ def check_exe(data_file):
         print('  Countersig not after: %s UTC' %
               (time.asctime(time.gmtime(auth.counter_chain_head[1]))))
         print
-
     print('Certificates')
     for (issuer, serial), cert in auth.certificates.items():
         print('  Issuer: %s' % issuer)
@@ -171,10 +125,89 @@ def check_exe(data_file):
         print('  SHA1: %s' % hashlib.sha1(bin_cert).hexdigest())
         print
 
+
+def check_exe(data_file, verbose=False):
+
+    with file(data_file, 'rb') as objf:
+        fingerprinter = fingerprint.Fingerprinter(objf)
+        is_pecoff = fingerprinter.EvalPecoff()
+        fingerprinter.EvalGeneric()
+        results = fingerprinter.HashIt()
+
+    if verbose:
+        print_hashes(results)
+
+    if not is_pecoff:
+        print('This is not a PE/COFF binary. Exiting.')
+        return
+
+    if verbose:
+        print_pecoff_hashes(results)
+
+    signed_pecoffs = [x for x in results if x['name'] == 'pecoff' and
+                      'SignedData' in x]
+
+    if not signed_pecoffs:
+        raise auth_data.Asn1Error('This PE/COFF binary has no signature. '
+                                  'Exiting.')
+
+    # TODO - can there be multiple signed_pecoffs?
+    signed_pecoff = signed_pecoffs[0]
+    if verbose and len(signed_pecoffs) > 1:
+        print("Found {:d} signed pecoffs. Only processing first "
+              "one.".format(len(signed_pecoffs)))
+
+    signed_datas = signed_pecoff['SignedData']
+    # There may be multiple of these, if the windows binary was signed multiple
+    # times, e.g. by different entities. Each of them adds a complete SignedData
+    # blob to the binary.
+    # TODO(user): Process all instances
+    signed_data = signed_datas[0]
+    if verbose and len(signed_datas) > 1:
+        print("Found {:d} signed datas. Only processing first "
+              "one.".format(len(signed_datas)))
+
+    blob = pecoff_blob.PecoffBlob(signed_data)
+
+    auth = auth_data.AuthData(blob.getCertificateBlob())
+    content_hasher_name = auth.digest_algorithm().name
+    computed_content_hash = signed_pecoff[content_hasher_name]
+
+    try:
+        auth.ValidateAsn1()
+        auth.ValidateHashes(computed_content_hash)
+        auth.ValidateSignatures()
+        auth.ValidateCertChains(time.gmtime())
+    except auth_data.Asn1Error:
+        if auth.openssl_error:
+            print('OpenSSL Errors:\n%s' % auth.openssl_error)
+        raise
+
+    # TODO - validate if this is okay for now.
+    # base validity on some combo of auth fields.
+
+    if verbose:
+        print_certificates(auth)
+
     if auth.trailing_data:
+        # should check here for all zero bytes. Not required, but common
+        # practice, so deviation is notable.
         print('Signature Blob had trailing (unvalidated) data (%d bytes): %s' %
               (len(auth.trailing_data), auth.trailing_data.encode('hex')))
 
+    # signing_cert_id is a tuple with a last element being the serial number of
+    # the certificate. That is a known quantity for our products.
+    cert_serial_number = auth.signing_cert_id[-1]
+    valid_signature = (auth.has_countersignature and
+                       (cert_serial_number in VALID_CERTS)
+                       )
+    return valid_signature
+
+
+def main():
+    data_file = sys.argv[1]
+    validity = check_exe(data_file)
+    raise SystemExit(0 if validity else 1)
 
 if __name__ == '__main__':
     main()
