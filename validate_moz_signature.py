@@ -125,6 +125,12 @@ def print_certificates(auth):
         print('  SHA1: %s' % hashlib.sha1(bin_cert).hexdigest())
         print
 
+    if auth.trailing_data:
+        # should check here for all zero bytes. Not required, but common
+        # practice, so deviation is notable.
+        print('Signature Blob had trailing (unvalidated) data (%d bytes): %s' %
+              (len(auth.trailing_data), auth.trailing_data.encode('hex')))
+
 
 def check_exe(data_file, verbose=False):
 
@@ -188,12 +194,6 @@ def check_exe(data_file, verbose=False):
 
     if verbose:
         print_certificates(auth)
-
-    if auth.trailing_data:
-        # should check here for all zero bytes. Not required, but common
-        # practice, so deviation is notable.
-        print('Signature Blob had trailing (unvalidated) data (%d bytes): %s' %
-              (len(auth.trailing_data), auth.trailing_data.encode('hex')))
 
     # signing_cert_id is a tuple with a last element being the serial number of
     # the certificate. That is a known quantity for our products.
